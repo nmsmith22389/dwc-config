@@ -6,7 +6,7 @@ import {
 	InputChannelName,
 	LogLevel,
 	MachineMode,
-	MoveShapingType,
+	InputShapingType,
 	KinematicsName,
 	StatusType,
 	isPrinting
@@ -19,10 +19,13 @@ import {
 	Heater,
 	InputChannel,
 	Kinematics, CoreKinematics, DeltaKinematics, HangprinterKinematics, ScaraKinematics,
+	MeshDeviation,
 	ParsedFileInfo,
 	Probe,
 	Tool,
-	fixMachineItems
+	fixObject,
+	fixObjectModel,
+	overloadModelPush
 } from './modelItems.js'
 
 import Path from '../../utils/path.js'
@@ -134,7 +137,15 @@ export class MachineModel {
 		compensation: {
 			fadeHeight: null,
 			file: null,
-			meshDeviation: null,
+			liveGrid: null,
+			_internalMeshDeviation: null,
+			get meshDeviation() { return this._internalMeshDeviation; },
+			set meshDeviation(value) {
+				if (value !== null) {
+					fixObject(value, new MeshDeviation());
+				}
+				this._internalMeshDeviation = value;
+			},
 			probeGrid: {
 				axes: ['X', 'Y'],
 				maxs: [-1, -1],
@@ -163,13 +174,17 @@ export class MachineModel {
 			timeout: 30.0
 		},
 		kinematics: new Kinematics(),
-		queue: [],
 		printingAcceleration: 10000,
+		queue: [],
+		rotation: {
+			angle: 0,
+			centre: [0, 0]
+		},
 		shaping: {
 			damping: 0.2,
-			frequency:40,
-			minimumAcceleration:10,
-			type: MoveShapingType.none
+			frequency: 40,
+			minAcceleration: 10,
+			type: InputShapingType.none
 		},
 		speedFactor: 1.0,
 		travelAcceleration: 10000,
@@ -197,6 +212,7 @@ export class MachineModel {
 	spindles = []
 	state = {
 		atxPower: null,
+		atxPowerPort: null,
 		beep: null,
 		currentTool: -1,
 		displayMessage: '',
@@ -207,8 +223,9 @@ export class MachineModel {
 		laserPwm: null,
 		logFile: null,
 		logLevel: LogLevel.off,
-		messageBox: null,
 		machineMode: MachineMode.fff,
+		macroRestarted: false,
+		messageBox: null,
 		msUpTime: 0,
 		nextTool: -1,
 		pluginsStarted: false,					// *** missing in RRF
@@ -307,13 +324,15 @@ export const DefaultMachineModel = new MachineModel({
 export class MachineModelModule {
 	constructor(connector) {
 		if (connector) {
-			this.state = new MachineModel({
+			this.state = Vue.observable(new MachineModel({
 				network: {
 					hostname: connector.hostname,
 					name: `(${connector.hostname})`
 				}
-			});
+			}));
+			overloadModelPush(this.state);
 		} else {
+			// Default machine model is static, no need to deal with list changes
 			this.state = DefaultMachineModel;
 		}
 	}
@@ -421,7 +440,7 @@ export class MachineModelModule {
 
 			// Apply new data
 			patch(state, payload, true);
-			fixMachineItems(state, payload);
+			fixObjectModel(state, payload);
 		},
 
 		addPlugin(state, plugin) {
